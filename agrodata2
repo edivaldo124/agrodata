@@ -1,0 +1,115 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "DHT.h"
+#include "esp_sleep.h"
+
+#define DHTPIN 4
+#define DHTTYPE DHT22
+#define PINO_SOLO 34
+
+ // sensores
+
+
+#define SENSOR_POWER 15 // sensores
+#define SENSOR_POWER2 14
+
+const char* ssid = "projetosentinela1";       
+const char* password = "projeto123";
+
+String servidor = "http://192.168.0.200:5000/dados";
+
+unsigned long intervalo = 10000;
+unsigned long ultimoEnvio = 0;
+unsigned long tempoDormir = 10 * 1000000;
+
+DHT dht(DHTPIN, DHTTYPE);
+
+void enviarLeituras(float um_ar, float temp_ar, float solo) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi desconectado!");
+    return;
+  }
+
+  HTTPClient http;
+
+  String url = servidor + 
+    "?umidade_ar=" + String(um_ar, 2) + 
+    "&temperatura_ar=" + String(temp_ar, 2) + 
+    "&umidade_solo=" + String(solo, 2);
+
+  Serial.println("==================================");
+  Serial.println("Enviando:");
+  Serial.println(url);
+
+  http.begin(url);
+  int codigo = http.GET();
+  http.end();
+
+  Serial.println("HTTP: " + String(codigo));
+}
+
+void setup() {
+  Serial.begin(9600);
+  dht.begin();
+
+  pinMode(SENSOR_POWER, OUTPUT);
+  pinMode(SENSOR_POWER2, OUTPUT); 
+  digitalWrite(SENSOR_POWER, HIGH);
+  digitalWrite(SENSOR_POWER, HIGH);
+  delay(5000); //  MAIS TEMPO para estabilizar
+
+  WiFi.begin(ssid, password);
+
+  Serial.print("Conectando");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+
+  Serial.println("\nConectado!");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  if (millis() - ultimoEnvio >= intervalo) {
+    ultimoEnvio = millis();
+
+    float umidade_ar = dht.readHumidity();
+    float temperatura_ar = dht.readTemperature();
+
+    //  PROTEÇÃO DHT
+    if (isnan(umidade_ar) || isnan(temperatura_ar)) {
+      Serial.println(" Erro no DHT!");
+      delay(2000);
+
+      esp_sleep_enable_timer_wakeup(tempoDormir);
+      esp_deep_sleep_start();
+    }
+
+    int soloBruto = analogRead(PINO_SOLO);
+
+    Serial.println("Solo bruto: " + String(soloBruto));
+
+    //  AJUSTE ESSES VALORES DEPOIS
+    float umidade_solo = map(soloBruto, 3500, 1500, 0, 100);
+
+    if (umidade_solo < 0) umidade_solo = 0;
+    if (umidade_solo > 100) umidade_solo = 100;
+
+    Serial.println("\n==== LEITURAS ====");
+    Serial.println("Umidade ar: " + String(umidade_ar));
+    Serial.println("Temperatura: " + String(temperatura_ar));
+    Serial.println("Solo (%): " + String(umidade_solo));
+
+    enviarLeituras(umidade_ar, temperatura_ar, umidade_solo);
+
+    digitalWrite(SENSOR_POWER, LOW);
+
+    Serial.println("Entrando em deep sleep...");
+    delay(3000);
+
+    esp_sleep_enable_timer_wakeup(tempoDormir);
+    esp_deep_sleep_start();
+  }
+}
